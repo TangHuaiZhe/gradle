@@ -351,7 +351,7 @@ class IncrementalExecutionIntegrationTest extends Specification implements Valid
         then:
         !result.executionResult.successful
         !result.reusedOutputOriginMetadata.present
-        result.executionReasons == ["Output property 'file' file ${outputFile.absolutePath} has changed."]
+        result.executionReasons == ["Output property 'file' file ${outputFile.absolutePath} has been removed."]
     }
 
     def "out of date when any file in output dir has changed type"() {
