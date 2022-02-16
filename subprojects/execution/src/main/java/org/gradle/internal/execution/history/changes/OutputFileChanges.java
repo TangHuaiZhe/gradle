@@ -60,12 +60,17 @@ public class OutputFileChanges implements ChangeContainer {
 
             @Override
             public boolean updated(String property, FileSystemSnapshot previous, FileSystemSnapshot current) {
-                if (previous == FileSystemSnapshot.EMPTY || current == FileSystemSnapshot.EMPTY) {
-                    throw new IllegalArgumentException("Output snapshots cannot be empty");
+                if (previous == current) {
+                    return true;
+                }
+                String propertyTitle = "Output property '" + property + "'";
+                if (previous == FileSystemSnapshot.EMPTY) {
+                    return reportAllAsAdded(current, propertyTitle, visitor);
+                } else if (current == FileSystemSnapshot.EMPTY) {
+                    return reportAllAsRemoved(previous, propertyTitle, visitor);
                 }
                 FileSystemLocationSnapshot previousSnapshot = (FileSystemLocationSnapshot) previous;
                 FileSystemLocationSnapshot currentSnapshot = (FileSystemLocationSnapshot) current;
-                String propertyTitle = "Output property '" + property + "'";
                 if (previousSnapshot.getHash().equals(currentSnapshot.getHash())) {
                     // As with relative path, we compare the name of the roots if they are regular files.
                     if (previousSnapshot.getType() != FileType.RegularFile
@@ -74,31 +79,9 @@ public class OutputFileChanges implements ChangeContainer {
                     }
                 } else {
                     if (previousSnapshot.getType() == FileType.Missing) {
-                        SnapshotVisitResult visitResult = currentSnapshot.accept(new RelativePathTracker(), (snapshot, relativePath) -> {
-                            DefaultFileChange fileChange = DefaultFileChange.added(
-                                snapshot.getAbsolutePath(),
-                                propertyTitle,
-                                snapshot.getType(),
-                                relativePath.toRelativePath()
-                            );
-                            return visitor.visitChange(fileChange)
-                                ? SnapshotVisitResult.CONTINUE
-                                : SnapshotVisitResult.TERMINATE;
-                        });
-                        return visitResult != SnapshotVisitResult.TERMINATE;
+                        return reportAllAsAdded(currentSnapshot, propertyTitle, visitor);
                     } else if (currentSnapshot.getType() == FileType.Missing) {
-                        SnapshotVisitResult visitResult = previousSnapshot.accept(new RelativePathTracker(), (snapshot, relativePath) -> {
-                            DefaultFileChange fileChange = DefaultFileChange.removed(
-                                snapshot.getAbsolutePath(),
-                                propertyTitle,
-                                snapshot.getType(),
-                                relativePath.toRelativePath()
-                            );
-                            return visitor.visitChange(fileChange)
-                                ? SnapshotVisitResult.CONTINUE
-                                : SnapshotVisitResult.TERMINATE;
-                        });
-                        return visitResult != SnapshotVisitResult.TERMINATE;
+                        return reportAllAsRemoved(previousSnapshot, propertyTitle, visitor);
                     }
                 }
                 RelativePathFingerprintingStrategy relativePathFingerprintingStrategy = new RelativePathFingerprintingStrategy(NOOP_STRING_INTERNER, DirectorySensitivity.DEFAULT);
@@ -110,6 +93,36 @@ public class OutputFileChanges implements ChangeContainer {
                     visitor);
             }
         });
+    }
+
+    private boolean reportAllAsAdded(FileSystemSnapshot currentSnapshot, String propertyTitle, ChangeVisitor visitor) {
+        SnapshotVisitResult visitResult = currentSnapshot.accept(new RelativePathTracker(), (snapshot, relativePath) -> {
+            DefaultFileChange fileChange = DefaultFileChange.added(
+                snapshot.getAbsolutePath(),
+                propertyTitle,
+                snapshot.getType(),
+                relativePath.toRelativePath()
+            );
+            return visitor.visitChange(fileChange)
+                ? SnapshotVisitResult.CONTINUE
+                : SnapshotVisitResult.TERMINATE;
+        });
+        return visitResult != SnapshotVisitResult.TERMINATE;
+    }
+
+    private boolean reportAllAsRemoved(FileSystemSnapshot previousSnapshot, String propertyTitle, ChangeVisitor visitor) {
+        SnapshotVisitResult visitResult = previousSnapshot.accept(new RelativePathTracker(), (snapshot, relativePath) -> {
+            DefaultFileChange fileChange = DefaultFileChange.removed(
+                snapshot.getAbsolutePath(),
+                propertyTitle,
+                snapshot.getType(),
+                relativePath.toRelativePath()
+            );
+            return visitor.visitChange(fileChange)
+                ? SnapshotVisitResult.CONTINUE
+                : SnapshotVisitResult.TERMINATE;
+        });
+        return visitResult != SnapshotVisitResult.TERMINATE;
     }
 
     private static Map<String, FileSystemLocationSnapshot> index(FileSystemSnapshot snapshot) {
