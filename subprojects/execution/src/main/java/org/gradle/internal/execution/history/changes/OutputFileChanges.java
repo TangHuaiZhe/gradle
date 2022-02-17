@@ -16,17 +16,12 @@
 
 package org.gradle.internal.execution.history.changes;
 
-import com.google.common.collect.Interner;
 import org.gradle.internal.file.FileType;
-import org.gradle.internal.fingerprint.CurrentFileCollectionFingerprint;
-import org.gradle.internal.fingerprint.DirectorySensitivity;
-import org.gradle.internal.fingerprint.impl.DefaultCurrentFileCollectionFingerprint;
-import org.gradle.internal.fingerprint.impl.RelativePathFingerprintingStrategy;
+import org.gradle.internal.fingerprint.FileSystemLocationFingerprint;
+import org.gradle.internal.fingerprint.impl.DefaultFileSystemLocationFingerprint;
 import org.gradle.internal.snapshot.FileSystemLocationSnapshot;
 import org.gradle.internal.snapshot.FileSystemSnapshot;
-import org.gradle.internal.snapshot.MissingFileSnapshot;
 import org.gradle.internal.snapshot.RelativePathTracker;
-import org.gradle.internal.snapshot.RootTrackingFileSystemSnapshotHierarchyVisitor;
 import org.gradle.internal.snapshot.SnapshotVisitResult;
 
 import java.util.LinkedHashMap;
@@ -34,8 +29,6 @@ import java.util.Map;
 import java.util.SortedMap;
 
 public class OutputFileChanges implements ChangeContainer {
-
-    private static final Interner<String> NOOP_STRING_INTERNER = sample -> sample;
 
     private final SortedMap<String, FileSystemSnapshot> previous;
     private final SortedMap<String, FileSystemSnapshot> current;
@@ -63,80 +56,40 @@ public class OutputFileChanges implements ChangeContainer {
                 if (previous == current) {
                     return true;
                 }
-                String propertyTitle = "Output property '" + property + "'";
-                if (previous == FileSystemSnapshot.EMPTY) {
-                    return reportAllAsAdded(current, propertyTitle, visitor);
-                } else if (current == FileSystemSnapshot.EMPTY) {
-                    return reportAllAsRemoved(previous, propertyTitle, visitor);
-                }
-                FileSystemLocationSnapshot previousSnapshot = (FileSystemLocationSnapshot) previous;
-                FileSystemLocationSnapshot currentSnapshot = (FileSystemLocationSnapshot) current;
-                if (previousSnapshot.getHash().equals(currentSnapshot.getHash())) {
-                    // As with relative path, we compare the name of the roots if they are regular files.
-                    if (previousSnapshot.getType() != FileType.RegularFile
-                        || previousSnapshot.getName().equals(currentSnapshot.getName())) {
-                        return true;
-                    }
-                } else {
-                    if (previousSnapshot.getType() == FileType.Missing) {
-                        return reportAllAsAdded(currentSnapshot, propertyTitle, visitor);
-                    } else if (currentSnapshot.getType() == FileType.Missing) {
-                        return reportAllAsRemoved(previousSnapshot, propertyTitle, visitor);
+                if (previous != FileSystemSnapshot.EMPTY && current != FileSystemSnapshot.EMPTY) {
+                    FileSystemLocationSnapshot previousSnapshot = (FileSystemLocationSnapshot) previous;
+                    FileSystemLocationSnapshot currentSnapshot = (FileSystemLocationSnapshot) current;
+                    if (previousSnapshot.getHash().equals(currentSnapshot.getHash())) {
+                        // As with relative path, we compare the name of the roots if they are regular files.
+                        if (previousSnapshot.getType() != FileType.RegularFile
+                            || previousSnapshot.getName().equals(currentSnapshot.getName())) {
+                            return true;
+                        }
                     }
                 }
-                RelativePathFingerprintingStrategy relativePathFingerprintingStrategy = new RelativePathFingerprintingStrategy(NOOP_STRING_INTERNER, DirectorySensitivity.DEFAULT);
-                CurrentFileCollectionFingerprint previousFingerprint = DefaultCurrentFileCollectionFingerprint.from(previous, relativePathFingerprintingStrategy, null);
-                CurrentFileCollectionFingerprint currentFingerprint = DefaultCurrentFileCollectionFingerprint.from(current, relativePathFingerprintingStrategy, null);
-                return NormalizedPathFingerprintCompareStrategy.INSTANCE.visitChangesSince(previousFingerprint,
+
+                Map<String, FileSystemLocationFingerprint> previousFingerprint = collectFingerprints(previous);
+                Map<String, FileSystemLocationFingerprint> currentFingerprint = collectFingerprints(current);
+
+                return NormalizedPathChangeDetector.INSTANCE.visitChangesSince(
+                    previousFingerprint,
                     currentFingerprint,
-                    propertyTitle,
+                    "Output property '" + property + "'",
                     visitor);
             }
         });
     }
 
-    private boolean reportAllAsAdded(FileSystemSnapshot currentSnapshot, String propertyTitle, ChangeVisitor visitor) {
-        SnapshotVisitResult visitResult = currentSnapshot.accept(new RelativePathTracker(), (snapshot, relativePath) -> {
-            DefaultFileChange fileChange = DefaultFileChange.added(
-                snapshot.getAbsolutePath(),
-                propertyTitle,
-                snapshot.getType(),
-                relativePath.toRelativePath()
-            );
-            return visitor.visitChange(fileChange)
-                ? SnapshotVisitResult.CONTINUE
-                : SnapshotVisitResult.TERMINATE;
-        });
-        return visitResult != SnapshotVisitResult.TERMINATE;
-    }
-
-    private boolean reportAllAsRemoved(FileSystemSnapshot previousSnapshot, String propertyTitle, ChangeVisitor visitor) {
-        SnapshotVisitResult visitResult = previousSnapshot.accept(new RelativePathTracker(), (snapshot, relativePath) -> {
-            DefaultFileChange fileChange = DefaultFileChange.removed(
-                snapshot.getAbsolutePath(),
-                propertyTitle,
-                snapshot.getType(),
-                relativePath.toRelativePath()
-            );
-            return visitor.visitChange(fileChange)
-                ? SnapshotVisitResult.CONTINUE
-                : SnapshotVisitResult.TERMINATE;
-        });
-        return visitResult != SnapshotVisitResult.TERMINATE;
-    }
-
-    private static Map<String, FileSystemLocationSnapshot> index(FileSystemSnapshot snapshot) {
-        Map<String, FileSystemLocationSnapshot> index = new LinkedHashMap<>();
-        snapshot.accept(new RootTrackingFileSystemSnapshotHierarchyVisitor() {
-            @Override
-            public SnapshotVisitResult visitEntry(FileSystemLocationSnapshot snapshot, boolean isRoot) {
-                // Remove missing roots so they show up as added/removed instead of changed
-                if (!(isRoot && snapshot instanceof MissingFileSnapshot)) {
-                    index.put(snapshot.getAbsolutePath(), snapshot);
-                }
+    private Map<String, FileSystemLocationFingerprint> collectFingerprints(FileSystemSnapshot roots) {
+        Map<String, FileSystemLocationFingerprint> result = new LinkedHashMap<>();
+        RelativePathTracker pathTracker = new RelativePathTracker();
+        roots.accept(pathTracker,
+            (snapshot, relativePath) -> {
+                String normalizedPath = pathTracker.isRoot() ? snapshot.getName() : relativePath.toRelativePath();
+                result.put(snapshot.getAbsolutePath(), new DefaultFileSystemLocationFingerprint(normalizedPath, snapshot.getType(), snapshot.getHash()));
                 return SnapshotVisitResult.CONTINUE;
             }
-        });
-        return index;
+        );
+        return result;
     }
 }
