@@ -190,8 +190,9 @@ class TaskParametersIntegrationTest extends AbstractIntegrationSpec implements V
 
         then:
         executedAndNotSkipped ':test'
+        outputContains "Output property 'outputs1' file ${file("build/output1")} has been removed."
         outputContains "Output property 'outputs1' file ${file("build/output1/output1.txt")} has been removed."
-        outputContains "Output property 'outputs2' file ${file("build/output2/output2.txt")} has been removed."
+        outputContains "Output property 'outputs2' file ${file("build/output2")} has been removed."
 
         when:
         succeeds "test"
